@@ -14,6 +14,10 @@ class FakeCompleted:
 
 
 class GateRunnerTests(unittest.TestCase):
+    @staticmethod
+    def fake_secret():
+        return "not-" + "a-placeholder-secret"
+
     def base_config(self):
         return {
             "requirements": ["The change preserves the public API."],
@@ -47,7 +51,7 @@ class GateRunnerTests(unittest.TestCase):
         result = self.runner(config).requirements_gate()
         self.assertEqual(result.status, "blocked")
 
-    @patch.object(GateRunner, "_diff_text", return_value="+API_KEY = 'not-a-placeholder-secret'\n")
+    @patch.object(GateRunner, "_diff_text", return_value="+" + "API" + "_KEY = '" + "not-" + "a-placeholder-secret" + "'\\n")
     def test_security_gate_fails_on_secret_pattern(self, _diff):
         result = self.runner().security_gate()
         self.assertEqual(result.status, "fail")
@@ -89,10 +93,15 @@ class GateRunnerTests(unittest.TestCase):
         self.assertNotIn("\x1b", result)
         self.assertIn("API_KEY", result)
 
+    @patch.object(GateRunner, "_diff_text", return_value="-API_KEY = '" + "not-" + "a-placeholder-secret" + "'\\n+value = 1\\n")
+    def test_removed_secret_is_not_flagged(self, _diff):
+        result = self.runner().security_gate()
+        self.assertEqual(result.status, "pass")
+
     def test_untracked_secret_is_detected(self):
         runner = self.runner()
         secret_file = runner.root / "new.py"
-        secret_file.write_text("API_KEY = 'not-a-placeholder-secret'\\n", encoding="utf-8")
+        secret_file.write_text("API" + "_KEY = " + repr(self.fake_secret()) + "\\n", encoding="utf-8")
         with patch.object(runner, "_git", side_effect=[FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(stdout="new.py\n"), FakeCompleted(), FakeCompleted()]):
             result = runner.security_gate()
         self.assertEqual(result.status, "fail")

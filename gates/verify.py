@@ -198,12 +198,13 @@ class GateRunner:
 
     def security_gate(self) -> GateResult:
         diff = self._diff_text()
+        additions = "\\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
         patterns = {
             "private_key": r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
             "aws_access_key": r"\bAKIA[0-9A-Z]{16}\b",
             "generic_secret_assignment": r"\b(?:api[_-]?key|secret|token|password)\b\s*[:=]\s*['\"][^'\"]{8,}['\"]",
         }
-        findings = [name for name, pattern in patterns.items() if re.search(pattern, diff, flags=re.IGNORECASE)]
+        findings = [name for name, pattern in patterns.items() if re.search(pattern, additions, flags=re.IGNORECASE)]
         if findings:
             return GateResult("security", "fail", "Potential secret material found in the diff.", {"findings": findings})
         return GateResult("security", "pass", "No configured secret patterns found in the diff.")
