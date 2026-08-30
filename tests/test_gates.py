@@ -62,6 +62,13 @@ class GateRunnerTests(unittest.TestCase):
         result = self.runner(config).small_change_gate()
         self.assertEqual(result.status, "fail")
 
+    @patch.object(GateRunner, "_diff_text", return_value="+import requests\\n")
+    @patch.object(GateRunner, "_changed_files", return_value=[])
+    def test_dependency_gate_rejects_unapproved_import(self, _files, _diff):
+        result = self.runner().dependency_gate()
+        self.assertEqual(result.status, "fail")
+        self.assertIn("requests", result.evidence["packages"])
+
     def test_full_run_abstains_without_test_evidence(self):
         config = self.base_config()
         config["test_command"] = ""
@@ -73,6 +80,22 @@ class GateRunnerTests(unittest.TestCase):
         self.assertTrue(report["abstain"])
         self.assertIn("tests", report["missing_evidence_gates"])
         self.assertIn("independent_checks", report["missing_evidence_gates"])
+
+    def test_diff_text_strips_ansi_codes(self):
+        runner = self.runner()
+        ansi_diff = "\x1b[32m+API_KEY = 'not-a-placeholder-secret'\x1b[m\n"
+        with patch.object(runner, "_git", return_value=FakeCompleted(stdout=ansi_diff)), patch.object(runner, "_changed_files", return_value=[]):
+            result = runner._diff_text()
+        self.assertNotIn("\x1b", result)
+        self.assertIn("API_KEY", result)
+
+    def test_untracked_secret_is_detected(self):
+        runner = self.runner()
+        secret_file = runner.root / "new.py"
+        secret_file.write_text("API_KEY = 'not-a-placeholder-secret'\\n", encoding="utf-8")
+        with patch.object(runner, "_git", side_effect=[FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(stdout="new.py\n"), FakeCompleted(), FakeCompleted()]):
+            result = runner.security_gate()
+        self.assertEqual(result.status, "fail")
 
 
 if __name__ == "__main__":

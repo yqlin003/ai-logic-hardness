@@ -104,6 +104,8 @@ class GateRunner:
         files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         staged = self._git("diff", "--cached", "--name-only")
         files.extend(line.strip() for line in staged.stdout.splitlines() if line.strip())
+        untracked = self._git("ls-files", "--others", "--exclude-standard")
+        files.extend(line.strip() for line in untracked.stdout.splitlines() if line.strip())
         return sorted(set(files))
 
     def small_change_gate(self) -> GateResult:
@@ -118,6 +120,13 @@ class GateRunner:
                 added += int(fields[0])
                 deleted += int(fields[1])
         files = self._changed_files()
+        tracked = set(self._git("diff", "--name-only", base, "--").stdout.splitlines()) | set(self._git("diff", "--cached", "--name-only").stdout.splitlines())
+        for path in set(files) - tracked:
+            candidate = self.root / path
+            try:
+                added += len(candidate.read_text(encoding="utf-8").splitlines())
+            except (OSError, UnicodeDecodeError):
+                added += 1
         if len(files) > max_files or added + deleted > max_lines:
             return GateResult(
                 "small_change", "fail", "Change exceeds configured review limits.",
@@ -172,16 +181,29 @@ class GateRunner:
         base = self.config.get("base", "HEAD")
         result = self._git("diff", base, "--")
         staged = self._git("diff", "--cached", "--")
-        return result.stdout + "\n" + staged.stdout
+        raw = result.stdout + "\n" + staged.stdout
+        # Include untracked text files because a pre-commit gate must not allow
+        # new files to bypass security, dependency, or diff-policy checks.
+        tracked = set(self._git("diff", "--name-only", base, "--").stdout.splitlines()) | set(self._git("diff", "--cached", "--name-only").stdout.splitlines())
+        for path in set(self._changed_files()) - tracked:
+            candidate = self.root / path
+            try:
+                content = candidate.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            raw += f"\n+++ untracked/{path}\n" + "\n".join("+" + line for line in content.splitlines())
+        # Git may emit ANSI color codes from the user's global configuration;
+        # remove them before applying source-text security and dependency rules.
+        return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw)
 
     def security_gate(self) -> GateResult:
         diff = self._diff_text()
         patterns = {
             "private_key": r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
             "aws_access_key": r"\bAKIA[0-9A-Z]{16}\b",
-            "generic_secret_assignment": r"(?i)\b(api[_-]?key|secret|token|password)\b\s*[:=]\s*['\"][^'\"]{8,}['\"]",
+            "generic_secret_assignment": r"\b(?:api[_-]?key|secret|token|password)\b\s*[:=]\s*['\"][^'\"]{8,}['\"]",
         }
-        findings = [name for name, pattern in patterns.items() if re.search(pattern, diff)]
+        findings = [name for name, pattern in patterns.items() if re.search(pattern, diff, flags=re.IGNORECASE)]
         if findings:
             return GateResult("security", "fail", "Potential secret material found in the diff.", {"findings": findings})
         return GateResult("security", "pass", "No configured secret patterns found in the diff.")
@@ -190,13 +212,15 @@ class GateRunner:
         diff = self._diff_text()
         additions = "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
         allowed = set(self.config.get("allowed_dependencies", []))
+        stdlib = set(getattr(sys, "stdlib_module_names", ()))
+        local_modules = {path.stem for path in self.root.rglob("*.py") if ".git" not in path.parts}
         suspicious = []
         for match in re.finditer(r"(?m)^\s*(?:from|import)\s+([A-Za-z0-9_.-]+)", additions):
             package = match.group(1).split(".")[0]
-            if allowed and package not in allowed and package not in {"typing", "json", "os", "re", "sys", "pathlib", "subprocess", "argparse", "dataclasses", "shlex"}:
+            if package not in allowed and package not in stdlib and package not in local_modules:
                 suspicious.append(package)
         new_dependency_files = [f for f in self._changed_files() if Path(f).name in {"requirements.txt", "pyproject.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}]
-        if suspicious and allowed:
+        if suspicious:
             return GateResult("dependencies", "fail", "Unapproved imported dependency detected.", {"packages": sorted(set(suspicious))})
         return GateResult("dependencies", "pass", "Dependency changes passed the configured policy.", {"dependency_files": new_dependency_files})
 
