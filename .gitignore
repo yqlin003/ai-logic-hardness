@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+gate-report.json
+research_sources/
+research_notes.md

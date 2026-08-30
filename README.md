@@ -57,3 +57,17 @@ This repository is at the initial setup stage. The next step is to define the fi
 ## License
 
 No license has been selected yet because this repository is private. Add a license before publishing or distributing the project.
+
+## Verifier-centered coding gates
+
+The repository now includes a dependency-free gate runner in `gates/verify.py`. It turns the verifier-centered architecture into an executable approval check. The runner validates that requirements and invariants are present, limits the size of a change, executes tests, runs independent checks, scans the diff for common secret patterns, enforces dependency policy, audits the diff, and writes a machine-readable report.
+
+Copy `examples/gates.config.json` into the repository root as `gates.config.json`, customize the requirements, invariants, commands, limits, and allowed paths, then run:
+
+```bash
+python3 -m gates.verify --config gates.config.json --root . --report gate-report.json
+```
+
+The runner exits with code `0` only when every gate passes. It exits with code `2` when it must **abstain** because a gate failed or evidence is missing, and code `3` for a configuration or execution error. Abstention is intentional: the system must not approve a change merely because it is plausible.
+
+The report records the decision, failed gates, missing-evidence gates, command outputs, changed files, and other evidence needed for human review. The implementation is a safety-oriented baseline, not a formal proof of software correctness; gate configuration and coverage must be improved for each project.

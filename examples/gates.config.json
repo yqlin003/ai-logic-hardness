@@ -1,0 +1,29 @@
+{
+  "base": "HEAD",
+  "requirements": [
+    "The verifier must produce a machine-readable report.",
+    "A failed or incomplete gate must result in abstention.",
+    "The implementation must not require third-party Python packages."
+  ],
+  "ambiguities": [],
+  "invariants": [
+    "No approval is issued when any gate fails or lacks evidence.",
+    "Security and dependency checks run before approval.",
+    "The final report includes evidence for every gate."
+  ],
+  "max_changed_files": 10,
+  "max_changed_lines": 500,
+  "test_command": "python3 -m unittest discover -s tests -v",
+  "independent_checks": [
+    "python3 -m compileall -q gates tests",
+    "python3 -m json.tool examples/gates.config.json"
+  ],
+  "allowed_dependencies": [],
+  "allowed_paths": [
+    "gates/**",
+    "tests/**",
+    "examples/**",
+    "README.md",
+    "research/**"
+  ]
+}
