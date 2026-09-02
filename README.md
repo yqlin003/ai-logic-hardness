@@ -68,7 +68,7 @@ Copy `examples/gates.config.json` into the repository root as `gates.config.json
 python3 -m gates.verify --config gates.config.json --root . --report gate-report.json
 ```
 
-The runner exits with code `0` only when every gate passes. It exits with code `2` when it must **abstain** because a gate failed or evidence is missing, and code `3` for a configuration or execution error. Abstention is intentional: the system must not approve a change merely because it is plausible.
+The runner exits with code `0` only when every gate passes. It exits with code `2` when it must **abstain** because a gate failed or evidence is missing, and code `3` for a configuration or execution error. Abstention is intentional: the system must not approve a change merely because it is plausible. A precise specification of the runner's current capabilities, gate semantics, configuration keys, and known limitations is maintained in [`docs/SPEC.md`](docs/SPEC.md).
 
 The dependency gate enforces manifests as well as imports: packages declared in `requirements*.txt`, `pyproject.toml`, or `package.json` must appear in `allowed_dependencies`, so a dependency cannot be smuggled in through a manifest without ever being imported in the diff. Files that cannot be verified automatically (lock files, `setup.py`, `Pipfile`, and similar) cause an abstention until they are listed in `reviewed_dependency_files` after human review.
 

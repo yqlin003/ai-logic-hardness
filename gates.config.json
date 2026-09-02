@@ -26,6 +26,7 @@
     "examples/**",
     "README.md",
     "research/**",
+    "docs/**",
     ".github/**",
     "gates.config.json"
   ]
