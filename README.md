@@ -70,4 +70,6 @@ python3 -m gates.verify --config gates.config.json --root . --report gate-report
 
 The runner exits with code `0` only when every gate passes. It exits with code `2` when it must **abstain** because a gate failed or evidence is missing, and code `3` for a configuration or execution error. Abstention is intentional: the system must not approve a change merely because it is plausible.
 
+Continuous integration runs the same checks automatically: the GitHub Actions workflow in `.github/workflows/ci.yml` executes the test suite and then runs the gate runner against each pull request's diff, so every proposed change is audited by the project's own verifier.
+
 The report records the decision, failed gates, missing-evidence gates, command outputs, changed files, and other evidence needed for human review. The implementation is a safety-oriented baseline, not a formal proof of software correctness; gate configuration and coverage must be improved for each project.
