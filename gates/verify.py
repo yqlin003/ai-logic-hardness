@@ -7,8 +7,8 @@ not as a claim of correctness. A blocked run must be reviewed before merging.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
-import os
 import re
 import shlex
 import subprocess
@@ -198,7 +198,7 @@ class GateRunner:
 
     def security_gate(self) -> GateResult:
         diff = self._diff_text()
-        additions = "\\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        additions = "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
         patterns = {
             "private_key": r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
             "aws_access_key": r"\bAKIA[0-9A-Z]{16}\b",
@@ -209,15 +209,47 @@ class GateRunner:
             return GateResult("security", "fail", "Potential secret material found in the diff.", {"findings": findings})
         return GateResult("security", "pass", "No configured secret patterns found in the diff.")
 
+    @staticmethod
+    def _imported_modules(additions: str) -> list[str]:
+        """Extract top-level imported module names from added source lines.
+
+        Handles ``import a, b as c`` and ``from pkg.mod import x``. Relative
+        imports (``from . import x``) reference the local package and are
+        skipped.
+        """
+        modules: list[str] = []
+        for line in additions.splitlines():
+            stripped = line.strip()
+            from_match = re.match(r"from\s+([A-Za-z0-9_.]+)\s+import\b", stripped)
+            if from_match:
+                modules.append(from_match.group(1))
+                continue
+            import_match = re.match(r"import\s+(.+)", stripped)
+            if import_match:
+                for token in import_match.group(1).split(","):
+                    parts = token.strip().split()
+                    if parts and re.fullmatch(r"[A-Za-z0-9_.]+", parts[0]):
+                        modules.append(parts[0])
+        return modules
+
     def dependency_gate(self) -> GateResult:
         diff = self._diff_text()
         additions = "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
         allowed = set(self.config.get("allowed_dependencies", []))
         stdlib = set(getattr(sys, "stdlib_module_names", ()))
         local_modules = {path.stem for path in self.root.rglob("*.py") if ".git" not in path.parts}
+        # Package directories (containing __init__.py) are importable local
+        # modules too, e.g. ``import gates.verify`` must not be flagged.
+        local_modules |= {
+            path.parent.name
+            for path in self.root.rglob("__init__.py")
+            if ".git" not in path.parts
+        }
         suspicious = []
-        for match in re.finditer(r"(?m)^\s*(?:from|import)\s+([A-Za-z0-9_.-]+)", additions):
-            package = match.group(1).split(".")[0]
+        for module in self._imported_modules(additions):
+            package = module.split(".")[0]
+            if not package:
+                continue  # relative import of the local package
             if package not in allowed and package not in stdlib and package not in local_modules:
                 suspicious.append(package)
         new_dependency_files = [f for f in self._changed_files() if Path(f).name in {"requirements.txt", "pyproject.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}]
@@ -231,7 +263,14 @@ class GateRunner:
         files = self._changed_files()
         outside = []
         if allowed_paths:
-            outside = [f for f in files if not any(Path(f).match(pattern) for pattern in allowed_paths)]
+            # fnmatch is used instead of Path.match because Path.match does
+            # not support recursive '**' before Python 3.13, which silently
+            # rejected files in nested directories (e.g. 'gates/sub/x.py'
+            # did not match 'gates/**').
+            outside = [
+                f for f in files
+                if not any(fnmatch.fnmatch(f, pattern) for pattern in allowed_paths)
+            ]
         if result.returncode != 0 or outside:
             return GateResult(
                 "diff_audit", "fail", "Diff audit found whitespace or path-policy violations.",
