@@ -19,11 +19,15 @@
     "python3 -m json.tool examples/gates.config.json"
   ],
   "allowed_dependencies": [],
+  "reviewed_dependency_files": [],
   "allowed_paths": [
     "gates/**",
     "tests/**",
     "examples/**",
     "README.md",
-    "research/**"
+    "research/**",
+    "docs/**",
+    ".github/**",
+    "gates.config.json"
   ]
 }

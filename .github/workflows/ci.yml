@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the gate runner can diff against the PR base.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run test suite
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Determine gate base
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}"
+            echo "ref=$(git merge-base "origin/${{ github.base_ref }}" HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=HEAD" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run gate runner on the change
+        env:
+          GATE_BASE: ${{ steps.base.outputs.ref }}
+        run: |
+          # Write the CI config outside the repository so it is not scanned
+          # as an untracked change by the gates themselves.
+          python3 - "$GATE_BASE" "$RUNNER_TEMP/ci-gates.config.json" <<'EOF'
+          import json, sys
+          with open("gates.config.json", encoding="utf-8") as handle:
+              config = json.load(handle)
+          config["base"] = sys.argv[1]
+          with open(sys.argv[2], "w", encoding="utf-8") as handle:
+              json.dump(config, handle, indent=2)
+          EOF
+          python3 -m gates.verify --config "$RUNNER_TEMP/ci-gates.config.json" --root . --report gate-report.json
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-report
+          path: gate-report.json
+          if-no-files-found: ignore
