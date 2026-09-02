@@ -17,6 +17,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    tomllib = None
+
 
 @dataclass
 class GateResult:
@@ -232,6 +237,80 @@ class GateRunner:
                         modules.append(parts[0])
         return modules
 
+    REVIEW_ONLY_DEPENDENCY_FILES = {
+        "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+        "Pipfile", "Pipfile.lock", "poetry.lock", "uv.lock",
+        "setup.py", "setup.cfg",
+    }
+
+    @staticmethod
+    def _is_requirements_file(name: str) -> bool:
+        return name.startswith("requirements") and name.endswith(".txt")
+
+    @classmethod
+    def _is_dependency_file(cls, path: str) -> bool:
+        name = Path(path).name
+        return (
+            name in {"pyproject.toml", "package.json"}
+            or cls._is_requirements_file(name)
+            or name in cls.REVIEW_ONLY_DEPENDENCY_FILES
+        )
+
+    @staticmethod
+    def _normalize_package(name: str) -> str:
+        """PEP 503 normalization so 'Requests' matches 'requests'."""
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    @staticmethod
+    def _requirement_name(spec: str) -> str | None:
+        match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
+        return match.group(1) if match else None
+
+    def _manifest_packages(self, path: str) -> tuple[list[str], str | None]:
+        """Return (declared packages, parse error) for a dependency manifest."""
+        name = Path(path).name
+        candidate = self.root / path
+        if not candidate.exists():
+            return [], None  # a deleted manifest introduces no dependencies
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return [], f"unreadable manifest: {exc}"
+        if self._is_requirements_file(name):
+            packages = []
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith(("#", "-")):
+                    continue
+                packages.append(self._requirement_name(stripped) or stripped)
+            return packages, None
+        if name == "pyproject.toml":
+            if tomllib is None:
+                return [], "tomllib unavailable; cannot parse pyproject.toml"
+            try:
+                data = tomllib.loads(text)
+            except tomllib.TOMLDecodeError as exc:
+                return [], f"invalid pyproject.toml: {exc}"
+            specs = list(data.get("project", {}).get("dependencies", []))
+            for group in data.get("project", {}).get("optional-dependencies", {}).values():
+                specs.extend(group)
+            for group in data.get("dependency-groups", {}).values():
+                specs.extend(item for item in group if isinstance(item, str))
+            specs.extend(data.get("build-system", {}).get("requires", []))
+            return [self._requirement_name(s) or s for s in specs if isinstance(s, str)], None
+        if name == "package.json":
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                return [], f"invalid package.json: {exc}"
+            packages = []
+            for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                value = data.get(key, {})
+                if isinstance(value, dict):
+                    packages.extend(value.keys())
+            return packages, None
+        return [], None
+
     def dependency_gate(self) -> GateResult:
         diff = self._diff_text()
         additions = "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
@@ -252,10 +331,47 @@ class GateRunner:
                 continue  # relative import of the local package
             if package not in allowed and package not in stdlib and package not in local_modules:
                 suspicious.append(package)
-        new_dependency_files = [f for f in self._changed_files() if Path(f).name in {"requirements.txt", "pyproject.toml", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"}]
-        if suspicious:
-            return GateResult("dependencies", "fail", "Unapproved imported dependency detected.", {"packages": sorted(set(suspicious))})
-        return GateResult("dependencies", "pass", "Dependency changes passed the configured policy.", {"dependency_files": new_dependency_files})
+        # Manifest changes are enforced, not merely reported: a package added
+        # to requirements.txt or pyproject.toml must be approved even if it
+        # is never imported in the diff, otherwise the policy can be bypassed
+        # through the manifest.
+        allowed_normalized = {self._normalize_package(a) for a in allowed}
+        reviewed = set(self.config.get("reviewed_dependency_files", []))
+        dependency_files = [f for f in self._changed_files() if self._is_dependency_file(f)]
+        manifest_report: dict[str, list[str]] = {}
+        unapproved_manifest: set[str] = set()
+        needs_review: list[str] = []
+        for path in dependency_files:
+            if Path(path).name in self.REVIEW_ONLY_DEPENDENCY_FILES:
+                if path not in reviewed:
+                    needs_review.append(path)
+                continue
+            packages, error = self._manifest_packages(path)
+            if error:
+                needs_review.append(f"{path} ({error})")
+                continue
+            manifest_report[path] = sorted(set(packages))
+            unapproved_manifest |= {
+                p for p in packages if self._normalize_package(p) not in allowed_normalized
+            }
+        evidence: dict[str, Any] = {
+            "dependency_files": dependency_files,
+            "manifest_packages": manifest_report,
+        }
+        if suspicious or unapproved_manifest:
+            evidence["packages"] = sorted(set(suspicious) | unapproved_manifest)
+            return GateResult(
+                "dependencies", "fail",
+                "Unapproved dependency detected in imports or manifests.", evidence,
+            )
+        if needs_review:
+            evidence["files_requiring_review"] = needs_review
+            return GateResult(
+                "dependencies", "blocked",
+                "Dependency files changed that cannot be verified automatically; "
+                "add them to reviewed_dependency_files after human review.", evidence,
+            )
+        return GateResult("dependencies", "pass", "Dependency changes passed the configured policy.", evidence)
 
     def diff_audit_gate(self) -> GateResult:
         result = self._git("diff", "--check", self.config.get("base", "HEAD"), "--")
