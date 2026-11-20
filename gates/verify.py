@@ -214,7 +214,13 @@ class GateRunner:
         additions = "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
         allowed = set(self.config.get("allowed_dependencies", []))
         stdlib = set(getattr(sys, "stdlib_module_names", ()))
-        local_modules = {path.stem for path in self.root.rglob("*.py") if ".git" not in path.parts}
+        local_modules = set()
+        for path in self.root.rglob("*.py"):
+            if ".git" in path.parts:
+                continue
+            local_modules.add(path.stem)
+            relative = path.relative_to(self.root)
+            local_modules.update(part for part in relative.parts[:-1])
         suspicious = []
         for match in re.finditer(r"(?m)^\s*(?:from|import)\s+([A-Za-z0-9_.-]+)", additions):
             package = match.group(1).split(".")[0]

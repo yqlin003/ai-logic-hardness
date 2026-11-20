@@ -15,14 +15,17 @@
   "max_changed_lines": 500,
   "test_command": "python3 -m unittest discover -s tests -v",
   "independent_checks": [
-    "python3 -m compileall -q gates tests",
+    "python3 -m compileall -q gates evaluations tests",
     "python3 -m json.tool examples/gates.config.json"
   ],
   "allowed_dependencies": [],
   "allowed_paths": [
     "gates/**",
+    "gates.config.json",
     "tests/**",
     "examples/**",
+    "benchmarks/**",
+    "evaluations/**",
     "README.md",
     "research/**"
   ]

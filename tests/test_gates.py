@@ -73,6 +73,16 @@ class GateRunnerTests(unittest.TestCase):
         self.assertEqual(result.status, "fail")
         self.assertIn("requests", result.evidence["packages"])
 
+    @patch.object(GateRunner, "_diff_text", return_value="+from evaluations.score import score_answer\\n")
+    @patch.object(GateRunner, "_changed_files", return_value=["tests/test_evaluations.py"])
+    def test_dependency_gate_accepts_local_package_import(self, _files, _diff):
+        runner = self.runner()
+        package = runner.root / "evaluations"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        result = runner.dependency_gate()
+        self.assertEqual(result.status, "pass")
+
     def test_full_run_abstains_without_test_evidence(self):
         config = self.base_config()
         config["test_command"] = ""

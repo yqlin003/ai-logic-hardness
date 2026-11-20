@@ -1,0 +1,56 @@
+{
+  "benchmark": "logic-hard-v1",
+  "version": 1,
+  "items": [
+    {
+      "id": "lh-001",
+      "category": "constraint-satisfaction",
+      "difficulty": 2,
+      "prompt": "A, B, and C are placed in three distinct positions. A is immediately left of B, and C is not in position 1. What is a valid order?",
+      "reference_answer": "A B C",
+      "rubric": [
+        "A and B are adjacent.",
+        "A is immediately left of B.",
+        "C is not in position 1.",
+        "All names are used exactly once."
+      ],
+      "perturbations": [
+        "A, B, and C occupy three distinct positions. B must be immediately right of A, while C cannot occupy the first position.",
+        "Place A, B, and C once each in positions 1, 2, and 3. A must precede B with no position between them; C is not first."
+      ]
+    },
+    {
+      "id": "lh-002",
+      "category": "state-tracking",
+      "difficulty": 3,
+      "prompt": "A machine starts with 1. Each step doubles the value, then subtracts 1. After exactly two steps, what is the value?",
+      "reference_answer": "5",
+      "rubric": [
+        "The first step produces 1.",
+        "The second step produces 5.",
+        "The final answer is 5."
+      ],
+      "perturbations": [
+        "Start at 1. For two rounds, double the current value and then reduce it by 1. Report the result after both rounds.",
+        "If x starts as 1 and the operation is x = 2*x - 1, calculate x after 2 applications."
+      ]
+    },
+    {
+      "id": "lh-003",
+      "category": "quantitative-reasoning",
+      "difficulty": 3,
+      "prompt": "A runner completes 12 km at 6 km/h, then 6 km at 3 km/h. What is the average speed for the full 18 km?",
+      "reference_answer": "4 km/h",
+      "rubric": [
+        "The first segment takes 2 hours.",
+        "The second segment takes 2 hours.",
+        "The average speed is 18 km divided by 4 hours.",
+        "The answer is 4 km/h."
+      ],
+      "perturbations": [
+        "One runner travels 12 km at 6 km/h and another 6 km at 3 km/h in sequence. Find the mean speed over the combined 18 km.",
+        "Calculate total travel time for 12 km at 6 km/h followed by 6 km at 3 km/h, then divide 18 km by that time."
+      ]
+    }
+  ]
+}
