@@ -1,9 +1,11 @@
+import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from gates.verify import GateRunner
+from gates.verify import GateRunner, main
 
 
 class FakeCompleted:
@@ -51,7 +53,7 @@ class GateRunnerTests(unittest.TestCase):
         result = self.runner(config).requirements_gate()
         self.assertEqual(result.status, "blocked")
 
-    @patch.object(GateRunner, "_diff_text", return_value="+" + "API" + "_KEY = '" + "not-" + "a-placeholder-secret" + "'\\n")
+    @patch.object(GateRunner, "_diff_text", return_value="+" + "API" + "_KEY = '" + "not-" + "a-placeholder-secret'\n")
     def test_security_gate_fails_on_secret_pattern(self, _diff):
         result = self.runner().security_gate()
         self.assertEqual(result.status, "fail")
@@ -66,14 +68,14 @@ class GateRunnerTests(unittest.TestCase):
         result = self.runner(config).small_change_gate()
         self.assertEqual(result.status, "fail")
 
-    @patch.object(GateRunner, "_diff_text", return_value="+import requests\\n")
+    @patch.object(GateRunner, "_diff_text", return_value="+import requests\n")
     @patch.object(GateRunner, "_changed_files", return_value=[])
     def test_dependency_gate_rejects_unapproved_import(self, _files, _diff):
         result = self.runner().dependency_gate()
         self.assertEqual(result.status, "fail")
         self.assertIn("requests", result.evidence["packages"])
 
-    @patch.object(GateRunner, "_diff_text", return_value="+from evaluations.score import score_answer\\n")
+    @patch.object(GateRunner, "_diff_text", return_value="+from evaluations.score import score_answer\n")
     @patch.object(GateRunner, "_changed_files", return_value=["tests/test_evaluations.py"])
     def test_dependency_gate_accepts_local_package_import(self, _files, _diff):
         runner = self.runner()
@@ -103,7 +105,7 @@ class GateRunnerTests(unittest.TestCase):
         self.assertNotIn("\x1b", result)
         self.assertIn("API_KEY", result)
 
-    @patch.object(GateRunner, "_diff_text", return_value="-API_KEY = '" + "not-" + "a-placeholder-secret" + "'\\n+value = 1\\n")
+    @patch.object(GateRunner, "_diff_text", return_value="-API_KEY = '" + "not-" + "a-placeholder-secret'\n+value = 1\n")
     def test_removed_secret_is_not_flagged(self, _diff):
         result = self.runner().security_gate()
         self.assertEqual(result.status, "pass")
@@ -111,10 +113,43 @@ class GateRunnerTests(unittest.TestCase):
     def test_untracked_secret_is_detected(self):
         runner = self.runner()
         secret_file = runner.root / "new.py"
-        secret_file.write_text("API" + "_KEY = " + repr(self.fake_secret()) + "\\n", encoding="utf-8")
-        with patch.object(runner, "_git", side_effect=[FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(stdout="new.py\n"), FakeCompleted(), FakeCompleted()]):
+        secret_file.write_text("API" + "_KEY = " + repr(self.fake_secret()) + "\n", encoding="utf-8")
+        with patch.object(GateRunner, "_git", side_effect=[FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(), FakeCompleted(stdout="new.py\n"), FakeCompleted(), FakeCompleted()]):
             result = runner.security_gate()
         self.assertEqual(result.status, "fail")
+
+    def test_cli_writes_approval_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "gates.config.json"
+            report_path = root / "gate-report.json"
+            config_path.write_text(json.dumps({
+                "base": "HEAD",
+                "requirements": ["The verifier produces a report."],
+                "ambiguities": [],
+                "invariants": ["Failed gates abstain."],
+                "test_command": "python3 -c pass",
+                "independent_checks": ["python3 -c pass"],
+                "allowed_dependencies": [],
+                "allowed_paths": ["gates.config.json"],
+            }), encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+            subprocess.run(["git", "add", "gates.config.json"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-qm", "baseline"], cwd=root, check=True)
+
+            exit_code = main([
+                "--config", str(config_path),
+                "--root", str(root),
+                "--report", str(report_path),
+            ])
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["decision"], "approve")
+            self.assertEqual(len(report["gates"]), 8)
+            self.assertFalse(report["missing_evidence_gates"])
 
 
 if __name__ == "__main__":
